@@ -1,0 +1,26 @@
+FROM python:3.9-slim-bullseye
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml uv.lock ./
+
+# Install all dependencies including dev
+RUN uv sync --frozen
+
+# Copy source code
+COPY src/ ./src/
+
+# Create notebooks directory
+RUN mkdir -p /app/notebooks /app/models
+
+# Create user
+RUN useradd -m appuser
+RUN chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8888

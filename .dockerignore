@@ -1,0 +1,10 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+taller_1.ipynb
+tests/
+requirements-dev.txt
+.dockerignore
+*.md
+.claude/
