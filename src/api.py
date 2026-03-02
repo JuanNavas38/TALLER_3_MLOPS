@@ -32,7 +32,7 @@ try:
     encoders = load_encoders()
     logger.info("Modelos y encoders cargados correctamente.")
 except FileNotFoundError as e:
-    logger.error("Modelos no encontrados. Ejecuta primero: python -m src.train")
+    logger.error("Modelos no encontrados. Ejecuta primero el DAG 'penguins_pipeline' en Airflow.")
     logger.error("Detalle: %s", e)
     sys.exit(1)
 
