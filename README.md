@@ -1,8 +1,8 @@
-# Taller 2: Palmer Penguins - MLOps
+# Taller 3: Palmer Penguins - MLOps con Airflow
 
 **MLOps - Pontificia Universidad Javeriana**
 
-**Clasificación de especies de pingüinos usando Docker Compose y `uv`.**
+**Pipeline automatizado de entrenamiento usando Apache Airflow, MySQL, PostgreSQL y Docker Compose.**
 
 ## Autores
 *   **Juan Navas**
@@ -12,45 +12,124 @@
 ---
 
 ## Descripción General
-Este proyecto evoluciona el taller anterior hacia una arquitectura de contenedores orquestada con Docker Compose. Se ha integrado el gestor de paquetes `uv` para una gestión de dependencias moderna y eficiente, y el sistema permite tanto la experimentación en Jupyter como el despliegue de una API de producción compartiendo la misma lógica y datos.
+Este proyecto evoluciona el Taller 2 agregando **Apache Airflow** como orquestador del pipeline de ML. 
+El sistema usa dos bases de datos separadas:
+- **MySQL**: exclusiva para datos de pingüinos (raw y procesados)
+- **PostgreSQL**: exclusiva para metadatos de Airflow
+
+El DAG automatiza todo el flujo desde la carga de datos hasta el entrenamiento del modelo.
+
+---
+
+## Arquitectura
+
+```
+MySQL (penguins_db)  →  Datos raw y procesados de pingüinos
+PostgreSQL           →  Metadatos internos de Airflow
+Airflow Scheduler    →  Ejecuta el DAG automáticamente
+Airflow Webserver    →  UI visual en puerto 8080
+API FastAPI          →  Inferencia del modelo entrenado
+```
+
+---
 
 ## Estructura del Proyecto
 
 ```text
-TALLER_2_MLOPS/
+TALLER_3_MLOPS/
 ├── src/                                # Código fuente
-│   ├── config.py                       # Configuración (Data Path, Model Path)
+│   ├── config.py                       # Configuración (paths, DB, modelos)
+│   ├── database.py                     # Conexión y operaciones MySQL
 │   ├── preprocessing.py                # Limpieza y encoding
 │   ├── train.py                        # Entrenamiento
-│   └── api.py                          # FastAPI
+│   └── api.py                          # FastAPI inferencia
+├── dags/                               # DAGs de Airflow
+│   └── penguin_training_dag.py         # Pipeline completo
 ├── data/                               # Dataset local (penguins.csv)
-├── notebooks/                          # Jupyter Notebooks
-│   └── train_model.ipynb
-├── models/                             # Artefactos (PKL, Metrics)
-├── docker-compose.yml                  # Orquestación de servicios
+├── models/                             # Artefactos (PKL, metrics.json)
+├── docker-compose.yml                  # Orquestación de todos los servicios
 ├── Dockerfile                          # Imagen de la API
-├── Dockerfile.jupyter                  # Imagen de JupyterLab
 ├── pyproject.toml                      # Gestión de dependencias con uv
+├── .env                                # Variables de entorno
 └── README.md
 ```
 
-## Ejecución con Docker Compose (Recomendado)
+---
 
-### 1. Levantar los servicios
+## Pipeline del DAG
+
+El DAG `penguin_training_pipeline` ejecuta 5 tareas en orden:
+
+```
+[1. clear_database] → [2. load_raw_data] → [3. preprocess_data] → [4. train_model] → [5. verify_artifacts]
+```
+
+| Tarea | Descripción |
+|-------|-------------|
+| `clear_database` | Borra el contenido de las tablas en MySQL |
+| `load_raw_data` | Carga el CSV a MySQL **sin preprocesamiento** |
+| `preprocess_data` | Limpia, codifica y guarda datos procesados en MySQL |
+| `train_model` | Lee datos procesados de MySQL y entrena RF + SVM |
+| `verify_artifacts` | Verifica que los modelos y métricas fueron guardados |
+
+---
+
+## Variables de Entorno
+
+Crea un archivo `.env` en la raíz del proyecto:
+
+```bash
+# Airflow
+AIRFLOW_UID=50000
+
+# MySQL - Base de datos de datos
+MYSQL_HOST=mysql
+MYSQL_PORT=3306
+MYSQL_USER=penguin_user
+MYSQL_PASSWORD=penguin_pass
+MYSQL_DATABASE=penguins_db
+MYSQL_ROOT_PASSWORD=root_pass
+
+# PostgreSQL - Metadatos de Airflow
+POSTGRES_USER=airflow
+POSTGRES_PASSWORD=airflow
+POSTGRES_DB=airflow
+```
+
+---
+
+## Ejecución con Docker Compose
+
+### 1. Levantar todos los servicios
 ```powershell
 docker-compose up --build -d
 ```
-Esto iniciará:
-*   **JupyterLab**: [http://localhost:8888](http://localhost:8888) (Acceso sin token)
-*   **API**: [http://localhost:8989](http://localhost:8989) (Docs: [/docs](http://localhost:8989/docs))
 
-### 2. Entrenamiento de Modelos
-El entrenamiento se puede disparar desde cualquier entorno:
-*   **Desde la terminal**: `docker-compose exec jupyter uv run python -m src.train`
-*   **Desde Jupyter**: Ejecutando las celdas de `notebooks/train_model.ipynb`.
+Esto iniciará en orden:
+1. **MySQL** y **PostgreSQL** (bases de datos)
+2. **Airflow Init** (inicializa DB y crea usuario admin)
+3. **Airflow Scheduler** y **Airflow Webserver**
+4. **API FastAPI**
 
-### 3. Predicciones vía API
-Puedes probar la clasificación usando el Swagger UI o `curl`:
+### 2. Verificar que todo está corriendo
+```powershell
+docker-compose ps
+```
+
+### 3. Acceder a la UI de Airflow
+- URL: [http://localhost:8080](http://localhost:8080)
+- Usuario: `admin`
+- Contraseña: `admin`
+
+### 4. Ejecutar el DAG
+1. Abre [http://localhost:8080](http://localhost:8080)
+2. Busca el DAG `penguin_training_pipeline`
+3. Actívalo con el toggle ▶️
+4. Haz clic en **Trigger DAG** para ejecutarlo manualmente
+
+### 5. Predicciones vía API
+Una vez entrenado el modelo, puedes hacer predicciones:
+
 ```powershell
 curl -X POST "http://localhost:8989/predict/rf" `
      -H "Content-Type: application/json" `
@@ -63,6 +142,31 @@ curl -X POST "http://localhost:8989/predict/rf" `
            "sex": "male"
          }'
 ```
+
+- **`/predict/rf`** → Random Forest
+- **`/predict/svm`** → Support Vector Machine
+- **Docs**: [http://localhost:8989/docs](http://localhost:8989/docs)
+
+### 6. Detener los servicios
+```powershell
+docker-compose down
+```
+
+Para eliminar también los volúmenes (borra datos de BD):
+```powershell
+docker-compose down -v
+```
+
+---
+
+## Servicios y Puertos
+
+| Servicio | Puerto | Descripción |
+|----------|--------|-------------|
+| Airflow UI | 8080 | Panel de control del pipeline |
+| API FastAPI | 8989 | Inferencia del modelo |
+| MySQL | 3306 | Base de datos de pingüinos |
+| PostgreSQL | 5432 | Metadatos de Airflow |
 
 ---
 
